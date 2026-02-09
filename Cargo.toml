@@ -14,7 +14,7 @@ debug = false
 rpath = false
 
 [dependencies]
-chacha20poly1305 = { version = "0.10", default-features = false, features = ["std", "heapless"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["std", "heapless", "getrandom"] }
 argon2 = { version = "0.5", default-features = false, features = ["std"] }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 rand_chacha = { version = "0.3", default-features = false, features = ["std"] }
@@ -22,7 +22,7 @@ sha2 = { version = "0.10", default-features = false }
 x25519-dalek = { version = "2.0", default-features = false, features = ["static_secrets"] }
 ed25519-dalek = { version = "2.0", default-features = false, features = ["std"] }
 getrandom = { version = "0.2", features = ["js"] }
-nix = { version = "0.27", default-features = false, features = ["process", "signal", "socket", "fs", "mman"] }
+nix = { version = "0.27", default-features = false, features = ["process", "signal", "socket", "fs", "mman", "ptrace"] }
 libc = "0.2"
 quinn = { version = "0.10", default-features = false, features = ["tls-rustls", "runtime-tokio"] }
 h3 = "0.0.5"
@@ -47,6 +47,7 @@ walkdir = "2.4"
 trust-dns-client = "0.21.1"
 trust-dns-proto = "0.21.1"
 trust-dns-resolver = { version = "0.21.1", default-features = false, features = ["serde-config", "dns-over-https-rustls", "tokio-runtime"] } # Added tokio-runtime
+time = "=0.3.36" # Pin time to avoid edition 2024 requirement
 
 [build-dependencies]
 chrono = "0.4"

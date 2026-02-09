@@ -21,7 +21,7 @@ impl ReflectiveLoader {
         let cname = CString::new(name)
             .map_err(|e| anyhow!("Failed to create CString: {}", e))?;
         let fd = unsafe {
-            memfd_create(cname.as_ptr(), MFD_CLOEXEC)
+            memfd_create(cname.as_ptr(), MFD_CLOEXEC as c_int)
         };
         if fd < 0 {
             return Err(anyhow!("Failed to create memfd: {}", std::io::Error::last_os_error()));
