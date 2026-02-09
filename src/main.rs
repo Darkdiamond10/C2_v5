@@ -19,7 +19,8 @@ mod watchdog;
 mod lateral;
 
 use anyhow::{anyhow, Result};
-use crypto::{SophiaCipher, SplitKeyContainer};
+use crypto::SophiaCipher;
+use memory::SplitKeyContainer;
 use environment::{EnvironmentalLock, EnvironmentFingerprint};
 use masquerade::{ProcessMasquerade, rewrite_argv_zero};
 use memory::{setup_signal_handlers, SecureMemory};

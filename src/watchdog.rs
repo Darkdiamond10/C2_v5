@@ -208,7 +208,7 @@ WantedBy=default.target
         if let Ok(output) = output {
             current_cron = String::from_utf8_lossy(&output.stdout).to_string();
         }
-        if !current_cron.contains(&binary_path) {
+        if !current_cron.contains(binary_path.as_ref()) {
             current_cron.push_str(&cron_entry);
             let mut cmd = Command::new("crontab");
             cmd.arg("-");
@@ -319,7 +319,7 @@ pub fn start_watchdog_mode(role: WatchdogRole) -> Result<()> {
     watchdog.my_role = role;
     let partner_pid = unsafe { libc::getppid() };
     watchdog.partner_pid = Some(Pid::from_raw(partner_pid as i32));
-    PARTNER_PID.store(partner_pid, Ordering::SeqCst);
+    PARTNER_PID.store(partner_pid as u32, Ordering::SeqCst);
     match role {
         WatchdogRole::Alpha => watchdog.run_alpha_watchdog(Pid::from_raw(partner_pid as i32)),
         WatchdogRole::Beta => watchdog.run_beta_watchdog(Pid::from_raw(partner_pid as i32)),

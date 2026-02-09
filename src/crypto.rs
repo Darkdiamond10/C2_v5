@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit, AeadCore},
     XChaCha20Poly1305, XNonce,
 };
+use rand::rngs::OsRng;
 use rand::RngCore;
 use std::mem::ManuallyDrop;
 

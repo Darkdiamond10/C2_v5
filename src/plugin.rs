@@ -27,6 +27,7 @@ pub trait PluginInterface: Send + Sync {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PluginMetadata {
     pub name: [u8; 64],
     pub version: [u8; 32],
