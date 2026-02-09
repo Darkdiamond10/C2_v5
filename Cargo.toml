@@ -41,10 +41,9 @@ uuid = { version = "1.6", features = ["v4"] }
 shellexpand = "3.1"
 gethostname = "0.4"
 walkdir = "2.4"
-trust-dns-client = "0.23"
-trust-dns-proto = "0.23"
-trust-dns-resolver = "0.23"
-trust-dns-https = "0.23"
+trust-dns-client = "0.21.1"
+trust-dns-proto = "0.21.1"
+trust-dns-resolver = { version = "0.21.1", features = ["serde-config", "dns-over-https-rustls"] }
 
 [build-dependencies]
 chrono = "0.4"
