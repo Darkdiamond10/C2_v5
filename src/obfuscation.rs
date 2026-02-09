@@ -4,110 +4,106 @@
 
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng},
-    ChaCha20Poly1305, Nonce,
+    aead::{Aead, KeyInit, OsRng, AeadCore}, // Imported AeadCore
+    XChaCha20Poly1305, XNonce,
 };
-use rand::Rng;
+use rand::{Rng, SeedableRng, RngCore};
+use rand_chacha::ChaCha20Rng;
 use std::mem::ManuallyDrop;
+use std::ptr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-pub struct StackString {
-    data: [u8; 256],
-    len: usize,
+// Suicide routine: Wipe memory and corrupt heap to crash analysis
+#[inline(always)]
+fn suicide_routine() -> ! {
+    unsafe {
+        // Wipe stack (approximate range, just thrash some memory)
+        let mut dummy = [0u8; 4096];
+        ptr::write_volatile(dummy.as_mut_ptr(), 0xFF);
+
+        // Corrupt heap/malloc structures if possible (blind write to likely heap locations or just random pointers)
+        // Here we just dereference a random high pointer to cause a segfault/access violation that looks like memory corruption
+        let ptr = 0xDEADBEEF as *mut u64;
+        ptr::write_volatile(ptr, 0xCAFEBABE);
+
+        // If that didn't kill us (it should), abort.
+        std::process::abort();
+    }
 }
 
-impl StackString {
-    pub fn new(encrypted: &[u8], key: &[u8; 32], nonce: &[u8; 12]) -> Result<Self> {
-        let cipher = ChaCha20Poly1305::new(key.into());
-        let nonce = Nonce::from_slice(nonce);
-        let decrypted = cipher.decrypt(nonce, encrypted)
-            .map_err(|e| anyhow!("Stack string decryption failed: {}", e))?;
-        let mut data = [0u8; 256];
-        let len = decrypted.len().min(256);
-        data[..len].copy_from_slice(&decrypted[..len]);
-        Ok(StackString { data, len })
+// Dynamic container that handles any size, erasing itself on drop
+pub struct SecureBuffer {
+    data: Vec<u8>,
+}
+
+impl SecureBuffer {
+    pub fn new(data: Vec<u8>) -> Self {
+        SecureBuffer { data }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
     }
 
     pub fn as_str(&self) -> Result<&str> {
-        std::str::from_utf8(&self.data[..self.len])
-            .map_err(|e| anyhow!("Invalid UTF-8: {}", e))
-    }
-
-    pub fn zeroize(&mut self) {
-        for byte in self.data.iter_mut() {
-            *byte = 0;
-        }
-        self.len = 0;
+        std::str::from_utf8(&self.data).map_err(|_| anyhow!("Invalid UTF-8"))
     }
 }
 
-impl Drop for StackString {
+impl Drop for SecureBuffer {
     fn drop(&mut self) {
-        self.zeroize();
+        unsafe {
+            // Wipe content
+            for i in 0..self.data.len() {
+                ptr::write_volatile(self.data.as_mut_ptr().add(i), 0);
+            }
+        }
     }
 }
+
+// Removed fixed-size StackString to avoid truncation.
 
 pub struct EncryptedString {
-    ciphertext: Vec<u8>,
-    nonce: [u8; 12],
-    tag: [u8; 16],
+    // Format: Nonce (24 bytes) || Ciphertext || Tag (16 bytes)
+    // We store it all in one Vec to keep it contiguous and simple for the decryptor.
+    pub data: Vec<u8>,
 }
 
 impl EncryptedString {
     pub fn new(plaintext: &str, key: &[u8; 32]) -> Result<Self> {
-        let cipher = ChaCha20Poly1305::new(key.into());
-        let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
-        let encrypted = cipher.encrypt(&nonce, plaintext.as_bytes())
-            .map_err(|e| anyhow!("String encryption failed: {}", e))?;
-        let len = encrypted.len();
-        if len < 16 {
-            return Err(anyhow!("Encrypted data too short"));
+        let cipher = XChaCha20Poly1305::new(key.into());
+        let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+        // encrypt returns ciphertext + tag appended
+        let ciphertext = cipher.encrypt(&nonce, plaintext.as_bytes())
+            .map_err(|_| anyhow!("Encryption failed"))?;
+
+        let mut data = Vec::with_capacity(24 + ciphertext.len());
+        data.extend_from_slice(nonce.as_slice());
+        data.extend_from_slice(&ciphertext);
+
+        Ok(EncryptedString { data })
+    }
+
+    pub fn decrypt(&self, key: &[u8; 32]) -> Result<SecureBuffer> {
+        if self.data.len() < 24 + 16 {
+             suicide_routine();
         }
-        let mut tag = [0u8; 16];
-        tag.copy_from_slice(&encrypted[len - 16..]);
-        let ciphertext = encrypted[..len - 16].to_vec();
-        let mut nonce_arr = [0u8; 12];
-        nonce_arr.copy_from_slice(&nonce);
-        Ok(EncryptedString {
-            ciphertext,
-            nonce: nonce_arr,
-            tag,
-        })
-    }
 
-    pub fn decrypt(&self, key: &[u8; 32]) -> Result<String> {
-        let cipher = ChaCha20Poly1305::new(key.into());
-        let nonce = Nonce::from_slice(&self.nonce);
-        let mut combined = Vec::with_capacity(self.ciphertext.len() + 16);
-        combined.extend_from_slice(&self.ciphertext);
-        combined.extend_from_slice(&self.tag);
-        let decrypted = cipher.decrypt(nonce, combined.as_ref())
-            .map_err(|e| anyhow!("String decryption failed: {}", e))?;
-        String::from_utf8(decrypted)
-            .map_err(|e| anyhow!("Invalid UTF-8: {}", e))
-    }
+        let nonce = XNonce::from_slice(&self.data[..24]);
+        let ciphertext = &self.data[24..];
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(12 + 16 + self.ciphertext.len());
-        bytes.extend_from_slice(&self.nonce);
-        bytes.extend_from_slice(&self.tag);
-        bytes.extend_from_slice(&self.ciphertext);
-        bytes
+        let cipher = XChaCha20Poly1305::new(key.into());
+        match cipher.decrypt(nonce, ciphertext) {
+            Ok(plaintext) => Ok(SecureBuffer::new(plaintext)),
+            Err(_) => {
+                // Decryption failed (tag mismatch or tampering)
+                suicide_routine();
+            }
+        }
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 28 {
-            return Err(anyhow!("Invalid encrypted string bytes"));
-        }
-        let mut nonce = [0u8; 12];
-        nonce.copy_from_slice(&bytes[..12]);
-        let mut tag = [0u8; 16];
-        tag.copy_from_slice(&bytes[12..28]);
-        let ciphertext = bytes[28..].to_vec();
-        Ok(EncryptedString {
-            ciphertext,
-            nonce,
-            tag,
-        })
+        Ok(EncryptedString { data: bytes.to_vec() })
     }
 }
 
@@ -134,13 +130,9 @@ impl StringEncryptionKey {
     }
 
     pub fn rotate(&mut self) -> Result<()> {
-        getrandom::getrandom(&mut self.key)?;
+        getrandom::getrandom(&mut *self.key)?; // Corrected Deref
         self.generation += 1;
         Ok(())
-    }
-
-    pub fn get_generation(&self) -> u64 {
-        self.generation
     }
 }
 
@@ -176,13 +168,18 @@ pub struct ControlFlowFlattener {
 
 impl ControlFlowFlattener {
     pub fn new() -> Self {
-        let mut flattener = ControlFlowFlattener {
-            state_order: Vec::new(),
-            current_index: 0,
-            seed: 0,
-        };
-        flattener.randomize_order();
-        flattener
+        // Seed from RDTSC + ASLR (address of stack variable) + Time
+        let stack_var = 0;
+        let stack_addr = &stack_var as *const _ as u64;
+        let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+
+        #[cfg(target_arch = "x86_64")]
+        let rdtsc = unsafe { std::arch::x86_64::_rdtsc() };
+        #[cfg(not(target_arch = "x86_64"))]
+        let rdtsc = 0; // Fallback
+
+        let seed = rdtsc ^ stack_addr ^ time;
+        ControlFlowFlattener::with_seed(seed)
     }
 
     pub fn with_seed(seed: u64) -> Self {
@@ -195,7 +192,7 @@ impl ControlFlowFlattener {
         flattener
     }
 
-    fn randomize_order(&mut self) {
+    fn randomize_order_seeded(&mut self) {
         use rand::seq::SliceRandom;
         let mut states = vec![
             DispatcherState::State1,
@@ -207,30 +204,10 @@ impl ControlFlowFlattener {
             DispatcherState::State7,
             DispatcherState::State8,
         ];
-        let mut rng = rand::thread_rng();
-        states.shuffle(&mut rng);
-        self.state_order = vec![DispatcherState::Entry];
-        self.state_order.extend(states);
-        self.state_order.push(DispatcherState::Exit);
-    }
 
-    fn randomize_order_seeded(&mut self) {
-        let mut states = vec![
-            DispatcherState::State1,
-            DispatcherState::State2,
-            DispatcherState::State3,
-            DispatcherState::State4,
-            DispatcherState::State5,
-            DispatcherState::State6,
-            DispatcherState::State7,
-            DispatcherState::State8,
-        ];
-        let mut current = self.seed;
-        for i in (1..states.len()).rev() {
-            current = current.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let j = (current as usize) % (i + 1);
-            states.swap(i, j);
-        }
+        let mut rng = ChaCha20Rng::seed_from_u64(self.seed);
+        states.shuffle(&mut rng);
+
         self.state_order = vec![DispatcherState::Entry];
         self.state_order.extend(states);
         self.state_order.push(DispatcherState::Exit);
@@ -248,15 +225,11 @@ impl ControlFlowFlattener {
 
     pub fn reset(&mut self) {
         self.current_index = 0;
-        self.randomize_order();
-    }
-
-    pub fn get_current_state(&self) -> Option<DispatcherState> {
-        self.state_order.get(self.current_index).copied()
-    }
-
-    pub fn is_complete(&self) -> bool {
-        self.current_index >= self.state_order.len()
+        // Re-seed for maximum unpredictability? Or keep consistent within a run?
+        // Let's re-seed to change the CFG dynamically at runtime if reset is called.
+        let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+        self.seed ^= time;
+        self.randomize_order_seeded();
     }
 }
 
@@ -279,13 +252,6 @@ where
         }
     }
 
-    pub fn with_seed(handler: F, seed: u64) -> Self {
-        FlattenedExecutionContext {
-            flattener: ControlFlowFlattener::with_seed(seed),
-            handler,
-        }
-    }
-
     pub fn execute(&mut self) -> Result<()> {
         while let Some(state) = self.flattener.next_state() {
             let should_continue = (self.handler)(state)?;
@@ -294,10 +260,6 @@ where
             }
         }
         Ok(())
-    }
-
-    pub fn reset(&mut self) {
-        self.flattener.reset();
     }
 }
 
@@ -316,18 +278,21 @@ impl RuntimeStringDecryptor {
         })
     }
 
-    pub fn decrypt_to_stack(&self, encrypted: &[u8]) -> Result<StackString> {
-        if encrypted.len() < 28 {
-            return Err(anyhow!("Encrypted data too short"));
+    // Decoupled decryptor that takes raw bytes
+    #[inline(always)]
+    pub fn decrypt_raw(&self, data: &[u8]) -> Result<SecureBuffer> {
+        if data.len() < 24 + 16 {
+             suicide_routine();
         }
-        let nonce: [u8; 12] = encrypted[..12].try_into()
-            .map_err(|_| anyhow!("Invalid nonce"))?;
-        let ciphertext_with_tag = &encrypted[12..];
-        StackString::new(ciphertext_with_tag, self.key.get_key(), &nonce)
-    }
 
-    pub fn encrypt(&self, plaintext: &str) -> Result<EncryptedString> {
-        EncryptedString::new(plaintext, self.key.get_key())
+        let nonce = XNonce::from_slice(&data[..24]);
+        let ciphertext = &data[24..];
+        let cipher = XChaCha20Poly1305::new(self.key.get_key().into());
+
+        match cipher.decrypt(nonce, ciphertext) {
+            Ok(plaintext) => Ok(SecureBuffer::new(plaintext)),
+            Err(_) => suicide_routine(),
+        }
     }
 
     pub fn rotate_key(&mut self) -> Result<()> {
@@ -335,39 +300,28 @@ impl RuntimeStringDecryptor {
     }
 }
 
-#[macro_export]
-macro_rules! encrypted_string {
-    ($plaintext:expr, $key:expr) => {{
-        let encrypted = $crate::obfuscation::encrypt_string_at_compile($plaintext, $key);
-        encrypted
-    }};
-}
-
 pub struct ObfuscationEngine {
     string_decryptor: RuntimeStringDecryptor,
-    execution_seed: u64,
 }
 
 impl ObfuscationEngine {
     pub fn new() -> Result<Self> {
-        let mut rng = rand::thread_rng();
         Ok(ObfuscationEngine {
             string_decryptor: RuntimeStringDecryptor::new()?,
-            execution_seed: rng.gen(),
         })
     }
 
     pub fn decrypt_string(&self, encrypted: &[u8]) -> Result<String> {
-        let enc_str = EncryptedString::from_bytes(encrypted)?;
-        enc_str.decrypt(self.string_decryptor.key.get_key())
+        // Helper that returns String for legacy compatibility, but uses SecureBuffer internally
+        let buffer = self.string_decryptor.decrypt_raw(encrypted)?;
+        Ok(buffer.as_str()?.to_string())
     }
 
     pub fn create_flattened_context<F>(&mut self, handler: F) -> FlattenedExecutionContext<F>
     where
         F: Fn(DispatcherState) -> Result<bool>,
     {
-        self.execution_seed = self.execution_seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        FlattenedExecutionContext::with_seed(handler, self.execution_seed)
+        FlattenedExecutionContext::new(handler)
     }
 
     pub fn rotate_keys(&mut self) -> Result<()> {
