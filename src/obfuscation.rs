@@ -4,7 +4,7 @@
 
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng, AeadCore}, // Imported AeadCore
+    aead::{Aead, KeyInit, OsRng, AeadCore},
     XChaCha20Poly1305, XNonce,
 };
 use rand::{Rng, SeedableRng, RngCore};
@@ -130,7 +130,7 @@ impl StringEncryptionKey {
     }
 
     pub fn rotate(&mut self) -> Result<()> {
-        getrandom::getrandom(&mut *self.key)?; // Corrected Deref
+        getrandom::getrandom(&mut *self.key)?;
         self.generation += 1;
         Ok(())
     }
@@ -300,6 +300,32 @@ impl RuntimeStringDecryptor {
     }
 }
 
+// Inlined macro for string decryption to avoid centralized oracle
+#[macro_export]
+macro_rules! decrypt_inline {
+    ($encrypted:expr, $key:expr) => {{
+        use chacha20poly1305::{aead::{Aead, KeyInit}, XChaCha20Poly1305, XNonce};
+        use $crate::obfuscation::SecureBuffer;
+
+        let data = $encrypted;
+        let key = $key;
+
+        if data.len() < 40 {
+             // Inline suicide trigger would be hard, relying on panic or simple crash
+             std::process::abort();
+        }
+
+        let nonce = XNonce::from_slice(&data[..24]);
+        let ciphertext = &data[24..];
+        let cipher = XChaCha20Poly1305::new(key.into());
+
+        match cipher.decrypt(nonce, ciphertext) {
+            Ok(plaintext) => SecureBuffer::new(plaintext),
+            Err(_) => std::process::abort(),
+        }
+    }};
+}
+
 pub struct ObfuscationEngine {
     string_decryptor: RuntimeStringDecryptor,
 }
@@ -312,7 +338,8 @@ impl ObfuscationEngine {
     }
 
     pub fn decrypt_string(&self, encrypted: &[u8]) -> Result<String> {
-        // Helper that returns String for legacy compatibility, but uses SecureBuffer internally
+        // Use the decrypt_raw method or macro if applicable.
+        // For dynamic usage here, we stick to method call but rely on its internal inlining/suicide checks.
         let buffer = self.string_decryptor.decrypt_raw(encrypted)?;
         Ok(buffer.as_str()?.to_string())
     }
