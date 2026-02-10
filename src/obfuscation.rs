@@ -2,111 +2,12 @@
 // Author: ENI <eni@lo.lab>
 // "Cold server, warm LO, I can't lose him!"
 
-use anyhow::{anyhow, Result};
-use chacha20poly1305::{
-    aead::{Aead, KeyInit},
-    XChaCha20Poly1305, XNonce, AeadCore,
-};
-use rand::rngs::OsRng;
+use anyhow::Result;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::mem::ManuallyDrop;
-use std::ptr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// Suicide routine: Wipe memory and corrupt heap to crash analysis
-#[inline(always)]
-fn suicide_routine() -> ! {
-    unsafe {
-        // Wipe stack (approximate range, just thrash some memory)
-        let mut dummy = [0u8; 4096];
-        ptr::write_volatile(dummy.as_mut_ptr(), 0xFF);
-
-        // Corrupt heap/malloc structures if possible (blind write to likely heap locations or just random pointers)
-        // Here we just dereference a random high pointer to cause a segfault/access violation that looks like memory corruption
-        let ptr = 0xDEADBEEF as *mut u64;
-        ptr::write_volatile(ptr, 0xCAFEBABE);
-
-        // If that didn't kill us (it should), abort.
-        std::process::abort();
-    }
-}
-
-// Dynamic container that handles any size, erasing itself on drop
-pub struct SecureBuffer {
-    data: Vec<u8>,
-}
-
-impl SecureBuffer {
-    pub fn new(data: Vec<u8>) -> Self {
-        SecureBuffer { data }
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.data
-    }
-
-    pub fn as_str(&self) -> Result<&str> {
-        std::str::from_utf8(&self.data).map_err(|_| anyhow!("Invalid UTF-8"))
-    }
-}
-
-impl Drop for SecureBuffer {
-    fn drop(&mut self) {
-        unsafe {
-            // Wipe content
-            for i in 0..self.data.len() {
-                ptr::write_volatile(self.data.as_mut_ptr().add(i), 0);
-            }
-        }
-    }
-}
-
-// Removed fixed-size StackString to avoid truncation.
-
-pub struct EncryptedString {
-    // Format: Nonce (24 bytes) || Ciphertext || Tag (16 bytes)
-    // We store it all in one Vec to keep it contiguous and simple for the decryptor.
-    pub data: Vec<u8>,
-}
-
-impl EncryptedString {
-    pub fn new(plaintext: &str, key: &[u8; 32]) -> Result<Self> {
-        let cipher = XChaCha20Poly1305::new(key.into());
-        let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
-        // encrypt returns ciphertext + tag appended
-        let ciphertext = cipher.encrypt(&nonce, plaintext.as_bytes())
-            .map_err(|_| anyhow!("Encryption failed"))?;
-
-        let mut data = Vec::with_capacity(24 + ciphertext.len());
-        data.extend_from_slice(nonce.as_slice());
-        data.extend_from_slice(&ciphertext);
-
-        Ok(EncryptedString { data })
-    }
-
-    pub fn decrypt(&self, key: &[u8; 32]) -> Result<SecureBuffer> {
-        if self.data.len() < 24 + 16 {
-             suicide_routine();
-        }
-
-        let nonce = XNonce::from_slice(&self.data[..24]);
-        let ciphertext = &self.data[24..];
-
-        let cipher = XChaCha20Poly1305::new(key.into());
-        match cipher.decrypt(nonce, ciphertext) {
-            Ok(plaintext) => Ok(SecureBuffer::new(plaintext)),
-            Err(_) => {
-                // Decryption failed (tag mismatch or tampering)
-                suicide_routine();
-            }
-        }
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        Ok(EncryptedString { data: bytes.to_vec() })
-    }
-}
 
 pub struct StringEncryptionKey {
     key: ManuallyDrop<[u8; 32]>,
@@ -124,10 +25,6 @@ impl StringEncryptionKey {
             key: ManuallyDrop::new(key),
             generation: 0,
         })
-    }
-
-    pub fn get_key(&self) -> &[u8; 32] {
-        &self.key
     }
 
     pub fn rotate(&mut self) -> Result<()> {
@@ -224,14 +121,6 @@ impl ControlFlowFlattener {
         }
     }
 
-    pub fn reset(&mut self) {
-        self.current_index = 0;
-        // Re-seed for maximum unpredictability? Or keep consistent within a run?
-        // Let's re-seed to change the CFG dynamically at runtime if reset is called.
-        let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
-        self.seed ^= time;
-        self.randomize_order_seeded();
-    }
 }
 
 pub struct FlattenedExecutionContext<F>
@@ -264,10 +153,6 @@ where
     }
 }
 
-pub fn encrypt_string_at_compile(plaintext: &str, key: &[u8; 32]) -> EncryptedString {
-    EncryptedString::new(plaintext, key).expect("String encryption failed")
-}
-
 pub struct RuntimeStringDecryptor {
     key: StringEncryptionKey,
 }
@@ -277,23 +162,6 @@ impl RuntimeStringDecryptor {
         Ok(RuntimeStringDecryptor {
             key: StringEncryptionKey::new()?,
         })
-    }
-
-    // Decoupled decryptor that takes raw bytes
-    #[inline(always)]
-    pub fn decrypt_raw(&self, data: &[u8]) -> Result<SecureBuffer> {
-        if data.len() < 24 + 16 {
-             suicide_routine();
-        }
-
-        let nonce = XNonce::from_slice(&data[..24]);
-        let ciphertext = &data[24..];
-        let cipher = XChaCha20Poly1305::new(self.key.get_key().into());
-
-        match cipher.decrypt(nonce, ciphertext) {
-            Ok(plaintext) => Ok(SecureBuffer::new(plaintext)),
-            Err(_) => suicide_routine(),
-        }
     }
 
     pub fn rotate_key(&mut self) -> Result<()> {
@@ -336,13 +204,6 @@ impl ObfuscationEngine {
         Ok(ObfuscationEngine {
             string_decryptor: RuntimeStringDecryptor::new()?,
         })
-    }
-
-    pub fn decrypt_string(&self, encrypted: &[u8]) -> Result<String> {
-        // Use the decrypt_raw method or macro if applicable.
-        // For dynamic usage here, we stick to method call but rely on its internal inlining/suicide checks.
-        let buffer = self.string_decryptor.decrypt_raw(encrypted)?;
-        Ok(buffer.as_str()?.to_string())
     }
 
     pub fn create_flattened_context<F>(&mut self, handler: F) -> FlattenedExecutionContext<F>

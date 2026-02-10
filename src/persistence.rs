@@ -102,17 +102,4 @@ WantedBy=default.target
     pub fn is_installed(&self) -> bool {
         self.service_path.exists()
     }
-
-    pub fn is_running(&self) -> bool {
-        let output = Command::new("systemctl")
-            .args(["--user", "is-active", &self.service_name])
-            .output();
-        match output {
-            Ok(out) => {
-                let status = String::from_utf8_lossy(&out.stdout);
-                status.trim() == "active"
-            }
-            Err(_) => false,
-        }
-    }
 }
