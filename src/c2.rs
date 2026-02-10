@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit, OsRng, AeadCore}, // Added AeadCore
     XChaCha20Poly1305, XNonce,
 };
 use quinn::{ClientConfig, Endpoint};
