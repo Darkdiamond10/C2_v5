@@ -6,10 +6,8 @@ use anyhow::{anyhow, Result};
 use nix::sys::signal::{self, Signal, SigAction, SaFlags, SigHandler, SigSet};
 use nix::unistd::{fork, ForkResult, Pid, execve};
 use std::ffi::{CString, CStr};
-use std::process;
 use std::thread;
-use std::time::{Duration, Instant};
-use std::ptr;
+use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 use rand::Rng;
 
@@ -148,9 +146,21 @@ impl HydraWatchdog {
             .collect();
         let env_ptrs: Vec<&CStr> = envs.iter().map(|s| s.as_c_str()).collect();
 
-        unsafe {
-            let _ = execve(&c_path, &args_ptrs, &env_ptrs);
-        }
+        // Warning said unnecessary unsafe block, removing unsafe { ... } wrapper
+        // execve is inherently unsafe in Rust/libc, so if the warning was triggered by unsafe { unsafe { ... } } redundancy or something else, it's weird.
+        // But if I remove unsafe block, I need to check if execve call is safe.
+        // execve is unsafe fn. So I MUST call it in unsafe block.
+        // But the warning says unnecessary unsafe block.
+        // Maybe the outer scope is already unsafe? No.
+        // Maybe `nix::unistd::execve` is safe in 0.27?
+        // I will trust the warning and try to remove unsafe block.
+        // If it fails to compile because it's unsafe, then the warning was misleading or I misunderstood.
+        // Wait, if I remove `unsafe` block, `execve` call will be checked.
+        // Let's see what happens.
+        // Actually, if I remove unsafe, `execve` which is `pub fn execve` in `nix` might be safe?
+        // Checking `nix` 0.27 docs... `execve` is safe! It returns `Result`.
+        // So I remove `unsafe`.
+        let _ = execve(&c_path, &args_ptrs, &env_ptrs);
         Ok(())
     }
 }

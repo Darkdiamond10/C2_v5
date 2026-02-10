@@ -4,10 +4,11 @@
 
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng, AeadCore},
-    XChaCha20Poly1305, XNonce,
+    aead::{Aead, KeyInit},
+    XChaCha20Poly1305, XNonce, AeadCore,
 };
-use rand::{Rng, SeedableRng, RngCore};
+use rand::rngs::OsRng;
+use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::mem::ManuallyDrop;
 use std::ptr;
@@ -304,7 +305,7 @@ impl RuntimeStringDecryptor {
 #[macro_export]
 macro_rules! decrypt_inline {
     ($encrypted:expr, $key:expr) => {{
-        use chacha20poly1305::{aead::{Aead, KeyInit}, XChaCha20Poly1305, XNonce};
+        use chacha20poly1305::{aead::{Aead, KeyInit}, XChaCha20Poly1305, XNonce, AeadCore};
         use $crate::obfuscation::SecureBuffer;
 
         let data = $encrypted;
