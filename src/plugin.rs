@@ -12,18 +12,10 @@ extern "C" {
     fn memfd_create(name: *const c_char, flags: c_int) -> c_int;
     fn ftruncate(fd: c_int, length: i64) -> c_int;
     fn write(fd: c_int, buf: *const c_void, count: usize) -> isize;
-    fn getpid() -> i32;
 }
 
 const MFD_CLOEXEC: c_int = 0x0001;
 const MFD_ALLOW_SEALING: c_int = 0x0002;
-
-pub trait PluginInterface: Send + Sync {
-    fn name(&self) -> &str;
-    fn version(&self) -> &str;
-    fn execute(&self, args: &[u8]) -> Result<Vec<u8>>;
-    fn cleanup(&mut self) -> Result<()>;
-}
 
 #[repr(C)]
 pub struct PluginMetadata {
@@ -165,9 +157,6 @@ impl InMemoryPlugin {
         &self.name
     }
 
-    pub fn is_loaded(&self) -> bool {
-        !self.handle.is_null() && self.fd >= 0
-    }
 }
 
 impl Drop for InMemoryPlugin {
@@ -204,14 +193,6 @@ impl PluginManager {
         Ok(idx)
     }
 
-    pub fn load_plugin_raw(&mut self, so_bytes: &[u8]) -> Result<usize> {
-        let mut plugin = InMemoryPlugin::new();
-        plugin.load_from_memory(so_bytes)?;
-        let idx = self.plugins.len();
-        self.plugins.push(plugin);
-        Ok(idx)
-    }
-
     pub fn execute_plugin(&self, idx: usize, args: &[u8]) -> Result<Vec<u8>> {
         if idx >= self.plugins.len() {
             return Err(anyhow!("Plugin index out of bounds"));
@@ -221,18 +202,6 @@ impl PluginManager {
 
     pub fn get_plugin_names(&self) -> Vec<&str> {
         self.plugins.iter().map(|p| p.get_name()).collect()
-    }
-
-    pub fn unload_plugin(&mut self, idx: usize) -> Result<()> {
-        if idx >= self.plugins.len() {
-            return Err(anyhow!("Plugin index out of bounds"));
-        }
-        self.plugins.remove(idx);
-        Ok(())
-    }
-
-    pub fn plugin_count(&self) -> usize {
-        self.plugins.len()
     }
 }
 
