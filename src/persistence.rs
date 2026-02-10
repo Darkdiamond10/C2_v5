@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -98,7 +98,7 @@ WantedBy=default.target
             binary_path
         ))
     }
-    
+
     pub fn is_installed(&self) -> bool {
         self.service_path.exists()
     }
