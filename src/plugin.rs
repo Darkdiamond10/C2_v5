@@ -5,7 +5,6 @@
 use anyhow::{anyhow, Result};
 use libc::{c_char, c_int, c_void, close, dlclose, dlopen, dlsym, RTLD_NOW};
 use std::ffi::CString;
-use std::os::unix::io::AsRawFd;
 use std::ptr;
 
 #[link(name = "c")]
@@ -126,7 +125,9 @@ impl InMemoryPlugin {
         if metadata_ptr.is_null() {
             return Err(anyhow!("Plugin metadata symbol not found"));
         }
-        self.metadata = unsafe { *(metadata_ptr as *const PluginMetadata) };
+        // SAFETY: We use std::ptr::read to copy the metadata structure from the loaded plugin's memory.
+        // This avoids move semantics issues since PluginMetadata does not implement Copy.
+        self.metadata = unsafe { std::ptr::read(metadata_ptr as *const PluginMetadata) };
         self.name = String::from_utf8_lossy(&self.metadata.name)
             .trim_end_matches('\0')
             .to_string();

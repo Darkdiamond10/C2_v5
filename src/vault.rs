@@ -35,7 +35,7 @@ impl DetachedHeader {
             integrity_hash,
         }
     }
-    
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(88);
         bytes.extend_from_slice(&self.nonce);
@@ -123,7 +123,7 @@ impl GhostVault {
         }
         Err(anyhow!("Payload not found in any target file"))
     }
-    
+
     fn find_injection_point(&self, data: &[u8], payload_size: usize) -> Result<usize> {
         if data.len() < payload_size + 100 {
             return Err(anyhow!("File too small for injection"));
@@ -164,7 +164,7 @@ impl GhostVault {
 
     fn extract_from_file(&self, path: &Path, payload_size: usize, header: &DetachedHeader) -> Result<Vec<u8>> {
         let file_data = fs::read(path)?;
-        let window_size = 256;
+        let _window_size = 256; // Renamed to suppress warning
         let step = 64;
         for i in (0..=(file_data.len() - payload_size)).step_by(step) {
             let mut payload = vec![0u8; payload_size];
@@ -177,7 +177,7 @@ impl GhostVault {
         }
         Err(anyhow!("Payload not found in file"))
     }
-    
+
     fn verify_integrity(&self, payload: &[u8], header: &DetachedHeader) -> bool {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();

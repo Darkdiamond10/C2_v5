@@ -31,7 +31,7 @@ impl<T> SecureMemory<T> {
         }
         Ok(())
     }
-    
+
     fn unlock(&self) -> Result<()> {
         unsafe {
             let ptr = &*self.data as *const T as *const c_void;
@@ -41,7 +41,7 @@ impl<T> SecureMemory<T> {
         }
         Ok(())
     }
-    
+
     pub fn get(&self) -> &T {
         &self.data
     }
@@ -49,7 +49,7 @@ impl<T> SecureMemory<T> {
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.data
     }
-    
+
     pub fn zeroize(&mut self) {
         unsafe {
             let ptr = &mut *self.data as *mut T as *mut u8;
@@ -85,7 +85,7 @@ impl SplitKeyContainer {
             part_b: SecureMemory::new(part_b)?,
         })
     }
-    
+
     pub fn reconstruct(&self) -> [u8; 32] {
         let mut master_key = [0u8; 32];
         let part_a = self.part_a.get();
@@ -95,7 +95,7 @@ impl SplitKeyContainer {
         }
         master_key
     }
-    
+
     pub fn zeroize(&mut self) {
         self.part_a.zeroize();
         self.part_b.zeroize();
@@ -124,7 +124,8 @@ pub fn setup_signal_handlers() -> Result<()> {
         let mut action: sigaction = std::mem::zeroed();
         sigemptyset(&mut action.sa_mask);
         action.sa_flags = 0;
-        action.sa_sigaction = cleanup_handler as usize;
+        // Fix function cast warning: cast to pointer first, then to usize
+        action.sa_sigaction = cleanup_handler as *const () as usize;
         if sigaction(SIGTERM, &action, std::ptr::null_mut()) != 0 {
             return Err(anyhow!("Failed to set SIGTERM handler"));
         }
@@ -150,11 +151,11 @@ impl SecureString {
             data: SecureMemory::new(bytes)?,
         })
     }
-    
+
     pub fn as_str(&self) -> &str {
         std::str::from_utf8(self.data.get()).unwrap_or("")
     }
-    
+
     pub fn zeroize(&mut self) {
         self.data.zeroize();
     }

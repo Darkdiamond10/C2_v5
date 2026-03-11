@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng},
-    XChaCha20Poly1305, XNonce,
+    aead::{Aead, KeyInit},
+    XChaCha20Poly1305, XNonce, AeadCore,
 };
+use rand::rngs::OsRng;
 use rand::RngCore;
 use std::mem::ManuallyDrop;
 
@@ -39,7 +40,7 @@ impl SplitKey {
         }
         master_key
     }
-    
+
     pub fn zeroize(&mut self) {
         unsafe {
             let ptr_a = self.part_a.as_mut_ptr();
@@ -68,7 +69,7 @@ impl SophiaCipher {
             cipher: XChaCha20Poly1305::new(key.into()),
         }
     }
-    
+
     pub fn encrypt_detached(&self, plaintext: &[u8]) -> Result<(Vec<u8>, XNonce, [u8; 16])> {
         let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
         let ciphertext = self.cipher.encrypt(&nonce, plaintext)

