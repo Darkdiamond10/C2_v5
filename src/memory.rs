@@ -46,10 +46,6 @@ impl<T> SecureMemory<T> {
         &self.data
     }
 
-    pub fn get_mut(&mut self) -> &mut T {
-        &mut self.data
-    }
-
     pub fn zeroize(&mut self) {
         unsafe {
             let ptr = &mut *self.data as *mut T as *mut u8;
@@ -138,25 +134,4 @@ pub fn setup_signal_handlers() -> Result<()> {
 
 pub fn is_cleanup_initiated() -> bool {
     CLEANUP_INITIATED.load(Ordering::SeqCst)
-}
-
-pub struct SecureString {
-    data: SecureMemory<Vec<u8>>,
-}
-
-impl SecureString {
-    pub fn new(s: &str) -> Result<Self> {
-        let bytes = s.as_bytes().to_vec();
-        Ok(SecureString {
-            data: SecureMemory::new(bytes)?,
-        })
-    }
-
-    pub fn as_str(&self) -> &str {
-        std::str::from_utf8(self.data.get()).unwrap_or("")
-    }
-
-    pub fn zeroize(&mut self) {
-        self.data.zeroize();
-    }
 }

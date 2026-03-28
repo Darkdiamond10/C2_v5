@@ -177,12 +177,12 @@ pub struct WatchdogConfig;
 impl Default for WatchdogConfig { fn default() -> Self { WatchdogConfig } }
 
 pub struct DualWatchdog {
-     config: WatchdogConfig,
+     _config: WatchdogConfig,
 }
 
 impl DualWatchdog {
     pub fn new(config: WatchdogConfig) -> Self {
-        DualWatchdog { config }
+        DualWatchdog { _config: config }
     }
 
     pub fn start(&mut self) -> Result<()> {
@@ -208,6 +208,8 @@ pub fn get_watchdog_role_from_args() -> Option<WatchdogRole> {
     if args.iter().any(|a| a == "--watchdog-child") {
         // Return a dummy role to trigger start_watchdog_mode
         Some(WatchdogRole::Alpha)
+    } else if args.iter().any(|a| a == "--watchdog-beta") {
+        Some(WatchdogRole::Beta)
     } else {
         None
     }
