@@ -1,0 +1,345 @@
+ error[E0432]: unresolved import `chacha20poly1305::aead::OsRng`
+  --> src/crypto.rs:3:27
+   |
+ 3 |     aead::{Aead, KeyInit, OsRng},
+   |                           ^^^^^ no `OsRng` in the root
+   |
+   = help: consider importing this struct instead:
+           rand::rngs::OsRng
+note: found an item that was configured out
+  --> /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aead-0.5.2/src/lib.rs:52:35
+   |
+50 | #[cfg(feature = "getrandom")]
+   |       --------------------- the item is gated behind the `getrandom` feature
+51 | #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+52 | pub use crypto_common::rand_core::OsRng;
+   |                                   ^^^^^
+
+error[E0432]: unresolved import `chacha20poly1305::aead::OsRng`
+  --> src/c2.rs:3:27
+   |
+ 3 |     aead::{Aead, KeyInit, OsRng, AeadCore}, // Added AeadCore
+   |                           ^^^^^ no `OsRng` in the root
+   |
+   = help: consider importing this struct instead:
+           rand::rngs::OsRng
+note: found an item that was configured out
+  --> /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aead-0.5.2/src/lib.rs:52:35
+   |
+50 | #[cfg(feature = "getrandom")]
+   |       --------------------- the item is gated behind the `getrandom` feature
+51 | #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+52 | pub use crypto_common::rand_core::OsRng;
+   |                                   ^^^^^
+
+error[E0432]: unresolved import `nix::sys::ptrace`
+  --> src/antidebug.rs:3:5
+   |
+ 3 | use nix::sys::ptrace;
+   |     ^^^^^^^^^^^^^^^^ no `ptrace` in `sys`
+   |
+note: found an item that was configured out
+  --> /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/nix-0.27.1/src/sys/mod.rs:93:13
+   |
+91 |     #![feature = "ptrace"]
+   |        ------------------ the item is gated behind the `ptrace` feature
+92 |     #[allow(missing_docs)]
+93 |     pub mod ptrace;
+   |             ^^^^^^
+
+error[E0432]: unresolved import `chacha20poly1305::aead::OsRng`
+  --> src/obfuscation.rs:7:27
+   |
+ 7 |     aead::{Aead, KeyInit, OsRng, AeadCore},
+   |                           ^^^^^ no `OsRng` in the root
+   |
+   = help: consider importing this struct instead:
+           rand::rngs::OsRng
+note: found an item that was configured out
+  --> /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aead-0.5.2/src/lib.rs:52:35
+   |
+50 | #[cfg(feature = "getrandom")]
+   |       --------------------- the item is gated behind the `getrandom` feature
+51 | #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+52 | pub use crypto_common::rand_core::OsRng;
+   |                                   ^^^^^
+
+error[E0432]: unresolved import `crypto::SplitKeyContainer`
+  --> src/main.rs:22:28
+   |
+22 | use crypto::{SophiaCipher, SplitKeyContainer};
+   |                            ^^^^^^^^^^^^^^^^^ no `SplitKeyContainer` in `crypto`
+   |
+   = help: consider importing this struct instead:
+           crate::memory::SplitKeyContainer
+
+warning: unused import: `anyhow`
+ --> src/persistence.rs:1:14
+  |
+1 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::os::unix::io::AsRawFd`
+ --> src/reflective.rs:4:5
+  |
+4 | use std::os::unix::io::AsRawFd;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `AeadCore`
+ --> src/c2.rs:3:34
+  |
+3 |     aead::{Aead, KeyInit, OsRng, AeadCore}, // Added AeadCore
+  |                                  ^^^^^^^^
+
+warning: unused import: `std::os::unix::io::AsRawFd`
+ --> src/plugin.rs:8:5
+  |
+8 | use std::os::unix::io::AsRawFd;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `AeadCore`
+ --> src/obfuscation.rs:7:34
+  |
+7 |     aead::{Aead, KeyInit, OsRng, AeadCore},
+  |                                  ^^^^^^^^
+
+warning: unused imports: `RngCore` and `Rng`
+  --> src/obfuscation.rs:10:12
+   |
+10 | use rand::{Rng, SeedableRng, RngCore};
+   |            ^^^               ^^^^^^^
+
+warning: unused import: `std::process`
+ --> src/watchdog.rs:9:5
+  |
+9 | use std::process;
+  |     ^^^^^^^^^^^^
+
+warning: unused import: `Instant`
+  --> src/watchdog.rs:11:27
+   |
+11 | use std::time::{Duration, Instant};
+   |                           ^^^^^^^
+
+warning: unused import: `std::ptr`
+  --> src/watchdog.rs:12:5
+   |
+12 | use std::ptr;
+   |     ^^^^^^^^
+
+warning: unused import: `EnvironmentFingerprint`
+  --> src/main.rs:23:38
+   |
+23 | use environment::{EnvironmentalLock, EnvironmentFingerprint};
+   |                                      ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `SecureMemory`
+  --> src/main.rs:25:37
+   |
+25 | use memory::{setup_signal_handlers, SecureMemory};
+   |                                     ^^^^^^^^^^^^
+
+warning: unused import: `std::path::PathBuf`
+  --> src/main.rs:31:5
+   |
+31 | use std::path::PathBuf;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Ordering`
+  --> src/main.rs:33:37
+   |
+33 | use std::sync::atomic::{AtomicBool, Ordering};
+   |                                     ^^^^^^^^
+
+warning: unused import: `rand::Rng`
+  --> src/main.rs:35:5
+   |
+35 | use rand::Rng;
+   |     ^^^^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> src/c2.rs:185:32
+    |
+185 |                  match base64::decode(content) {
+    |                                ^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `base64::encode`: Use Engine::encode
+   --> src/c2.rs:202:47
+    |
+202 |                         let content = base64::encode(data);
+    |                                               ^^^^^^
+
+warning: use of deprecated method `rustls::RootCertStore::add_server_trust_anchors`: Please use `add_trust_anchors` instead
+  --> src/c2.rs:90:20
+   |
+90 |         root_store.add_server_trust_anchors(
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0609]: no field `0` on type `&'static [webpki_roots::TrustAnchor<'static>]`
+  --> src/c2.rs:91:44
+   |
+91 |             webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+   |                                            ^ unknown field
+
+error[E0599]: no function or associated item named `generate_nonce` found for struct `ChaChaPoly1305<C, N>` in the current scope
+   --> src/c2.rs:120:40
+    |
+120 |         let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    |                                        ^^^^^^^^^^^^^^ function or associated item not found in `ChaChaPoly1305<..., ...>`
+    |
+    = note: the full name for the type has been written to '/root/C2_v5-sophia-c2-upgrade-11743028208741354522/target/debug/deps/sophia-d8dad8764d71de32.long-type-14687970233938298876.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0308]: mismatched types
+   --> src/c2.rs:136:37
+    |
+136 |             recv_stream.read_to_end(&mut buf).await?;
+    |                         ----------- ^^^^^^^^ expected `usize`, found `&mut Vec<_>`
+    |                         |
+    |                         arguments to this method are incorrect
+    |
+    = note:           expected type `usize`
+            found mutable reference `&mut std::vec::Vec<_>`
+note: method defined here
+   --> /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quinn-0.10.2/src/recv_stream.rs:233:18
+    |
+233 |     pub async fn read_to_end(&mut self, size_limit: usize) -> Result...
+    |                  ^^^^^^^^^^^
+
+error[E0599]: no function or associated item named `generate_nonce` found for struct `ChaChaPoly1305<C, N>` in the current scope
+  --> src/crypto.rs:73:40
+   |
+73 |         let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+   |                                        ^^^^^^^^^^^^^^ function or associated item not found in `ChaChaPoly1305<..., ...>`
+   |
+   = note: the full name for the type has been written to '/root/C2_v5-sophia-c2-upgrade-11743028208741354522/target/debug/deps/sophia-d8dad8764d71de32.long-type-14687970233938298876.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+
+error[E0308]: mismatched types
+  --> src/reflective.rs:24:42
+   |
+24 |             memfd_create(cname.as_ptr(), MFD_CLOEXEC)
+   |             ------------                 ^^^^^^^^^^^ expected `i32`, found `u32`
+   |             |
+   |             arguments to this function are incorrect
+   |
+note: function defined here
+  --> src/reflective.rs:8:8
+   |
+ 8 |     fn memfd_create(name: *const c_char, flags: c_int) -> c_int;
+   |        ^^^^^^^^^^^^                      -----
+help: you can convert a `u32` to an `i32` and panic if the converted value doesn't fit
+   |
+24 |             memfd_create(cname.as_ptr(), MFD_CLOEXEC.try_into().unwrap())
+   |                                                     ++++++++++++++++++++
+
+error[E0599]: no function or associated item named `google_https` found for struct `ResolverConfig` in the current scope
+   --> src/c2.rs:266:29
+    |
+266 |             ResolverConfig::google_https()
+    |                             ^^^^^^^^^^^^ function or associated item not found in `ResolverConfig`
+    |
+note: if you're trying to build a new `ResolverConfig` consider using one of the following associated functions:
+      ResolverConfig::new
+      ResolverConfig::google
+      ResolverConfig::cloudflare
+      ResolverConfig::cloudflare_tls
+      and 5 others
+   --> /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/trust-dns-resolver-0.21.2/src/config.rs:43:5
+    |
+ 43 |     pub fn new() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^
+...
+ 57 |     pub fn google() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 71 |     pub fn cloudflare() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 87 |     pub fn cloudflare_tls() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: there is an associated function `google` with a similar name
+    |
+266 -             ResolverConfig::google_https()
+266 +             ResolverConfig::google()
+    |
+
+error[E0308]: mismatched types
+   --> src/c2.rs:271:26
+    |
+271 |         Ok(DoHResolver { resolver })
+    |                          ^^^^^^^^ expected `AsyncResolver<GenericConnection, ...>`, found `Result<AsyncResolver<..., ...>, ...>`
+    |
+    = note: expected struct `AsyncResolver<_, _>`
+                 found enum `Result<AsyncResolver<_, _>, ResolveError>`
+help: use the `?` operator to extract the `Result<AsyncResolver<GenericConnection, GenericConnectionProvider<trust_dns_resolver::name_server::TokioRuntime>>, ResolveError>` value, propagating a `Result::Err` value to the caller
+    |
+271 |         Ok(DoHResolver { resolver: resolver? })
+    |                                  +++++++++++
+
+error[E0599]: no function or associated item named `generate_nonce` found for struct `ChaChaPoly1305<C, N>` in the current scope
+  --> src/obfuscation.rs:75:40
+   |
+75 |         let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+   |                                        ^^^^^^^^^^^^^^ function or associated item not found in `ChaChaPoly1305<..., ...>`
+   |
+   = note: the full name for the type has been written to '/root/C2_v5-sophia-c2-upgrade-11743028208741354522/target/debug/deps/sophia-d8dad8764d71de32.long-type-14687970233938298876.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+
+warning: unused import: `AsyncWriteExt`
+  --> src/c2.rs:13:31
+   |
+13 | use tokio::io::{AsyncReadExt, AsyncWriteExt};
+   |                               ^^^^^^^^^^^^^
+
+warning: unused import: `AsyncReadExt`
+  --> src/c2.rs:13:17
+   |
+13 | use tokio::io::{AsyncReadExt, AsyncWriteExt};
+   |                 ^^^^^^^^^^^^
+
+warning: unused variable: `window_size`
+   --> src/vault.rs:167:13
+    |
+167 |         let window_size = 256;
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_window_size`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+error[E0507]: cannot move out of a raw pointer
+   --> src/plugin.rs:129:34
+    |
+129 | ...unsafe { *(metadata_ptr as *const PluginMetadata) };
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ move occurs because value has type `PluginMetadata`, which does not implement the `Copy` trait
+    |
+note: if `PluginMetadata` implemented `Clone`, you could clone the value
+   --> src/plugin.rs:30:1
+    |
+ 30 | pub struct PluginMetadata {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^ consider implementing `Clone` for this type
+...
+129 |         self.metadata = unsafe { *(metadata_ptr as *const PluginMetadata) };
+    |                                  ---------------------------------------- you could clone this value
+
+warning: unnecessary `unsafe` block
+   --> src/watchdog.rs:151:9
+    |
+151 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `cipher`
+   --> src/main.rs:233:29
+    |
+233 |     fn main_loop(&mut self, cipher: &SophiaCipher) -> Result<()> {
+    |                             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_cipher`
+
+Some errors have detailed explanations: E0308, E0432, E0507, E0599, E0609.
+For more information about an error, try `rustc --explain E0308`.
+warning: `sophia` (bin "sophia") generated 22 warnings
+error: could not compile `sophia` (bin "sophia") due to 14 previous errors; 22 warnings emitted
